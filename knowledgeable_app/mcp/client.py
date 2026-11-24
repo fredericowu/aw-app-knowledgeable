@@ -1265,7 +1265,7 @@ async def knowledge_search_data(args: dict) -> tuple[dict | None, str | None]:
         return None, "query is required"
 
     body: dict = {"query": query}
-    for field in ("mode", "radius", "limit", "subqueries", "rounds", "budget_ms", "synthesize"):
+    for field in ("mode", "radius", "limit", "subqueries", "rounds", "budget_ms", "synthesize", "include_qa"):
         if args.get(field) is not None:
             body[field] = args[field]
     if args.get("filters"):
@@ -1384,6 +1384,38 @@ async def knowledge_sources_catalog(args: dict) -> tuple[str, bool]:
     data, err = await _get("/api/knowledge/sources/catalog")
     if err:
         return f"knowledge_sources_catalog failed: {err}", True
+    return _as_text(data), False
+
+
+async def qa_search(args: dict) -> tuple[str, bool]:
+    """POST /api/qa/search — the Q&A registry's agent-facing door (design ref
+    ``qa-section-design-v2``). A thin forward, field by field: the backend owns
+    validation, the score floor and the exact/lexical fusion. At least one of
+    ``query``/``tags`` is required (checked here only so the caller gets the
+    reason without a round trip; the backend enforces it too). Read-only —
+    there is deliberately no agent write tool for Q&A."""
+    query = (args.get("query") or "").strip() if isinstance(args.get("query"), str) else ""
+    tags = args.get("tags")
+    if isinstance(tags, str):
+        tags = [tags]
+    if not query and not tags:
+        return "at least one of query or tags is required", True
+
+    body: dict = {}
+    if query:
+        body["query"] = query
+    if tags:
+        body["tags"] = tags
+    if args.get("tags_mode") is not None:
+        body["tags_mode"] = args["tags_mode"]
+    if args.get("limit") is not None:
+        body["limit"] = args["limit"]
+    if args.get("include_disabled") is not None:
+        body["include_disabled"] = bool(args["include_disabled"])
+
+    data, err = await _post_json("/api/qa/search", body)
+    if err:
+        return f"qa_search failed: {err}", True
     return _as_text(data), False
 
 
@@ -1693,6 +1725,16 @@ TOOLS_SCHEMA = [
                         "`knowledge`. Absent entirely, the response is unchanged."
                     ),
                 },
+                "include_qa": {
+                    "type": "boolean",
+                    "description": (
+                        "Default true. The curated Q&A registry is searched alongside the "
+                        "document arms and its hits come back in `chunks` with "
+                        "`source: \"qa\"` and a `qa_id` (there is no real document behind "
+                        "one: `text` holds `Q: ...` / `A: ...`). Pass false to exclude them. Skipped "
+                        "automatically when `collection` or document `filters` are set."
+                    ),
+                },
                 "code_query": {
                     "type": "string",
                     "description": (
@@ -1713,16 +1755,17 @@ TOOLS_SCHEMA = [
                 },
                 "mode": {
                     "type": "string",
-                    "enum": ["vector", "lexical", "graph", "fused"],
+                    "enum": ["vector", "lexical", "graph", "fused", "qa"],
                     "description": (
-                        "Which retrieval arm(s) to fan every sub-query across. 'vector': "
+                        "Which retrieval arm(s) to fan every sub-query across. 'qa': only "
+                        "the curated Q&A registry (hits carry source 'qa'). 'vector': "
                         "embedding similarity only. 'lexical': BM25 full-text over chunk "
                         "text (distinct from search_nodes' label-substring match). "
                         "'graph': seed a few candidate documents by vector similarity, "
                         "then widen via LINKS_TO/RELATED_TO out to `radius` hops and score "
                         "the expanded set exactly — finds a differently-worded answer "
                         "reachable only by document structure, not by content similarity "
-                        "alone. 'fused' (default): all three, RRF-merged."
+                        "alone. 'fused' (default): all three document arms plus the Q&A arm, RRF-merged."
                     ),
                 },
                 "radius": {
@@ -1867,6 +1910,42 @@ TOOLS_SCHEMA = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "qa_search",
+        "description": (
+            "Search this workspace's curated Q&A registry — short, vetted question/"
+            "answer pairs written by people or contributed by installed apps "
+            "(`contributes.qa`). Prefer this when you want the vetted answer to a "
+            "known kind of question; use `knowledge_search` for open research over "
+            "documents (it also surfaces Q&A hits, with `source: \"qa\"`). Give "
+            "`query` (semantic + keyword match), `tags` (exact tag filter), or both; "
+            "at least one is required. Read-only. Returns {items: [{id, question, "
+            "answer, tags, origin, score, ...}]}; `origin` is `manual` or `app`. "
+            "Disabled items are hidden unless `include_disabled` is true."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What you want to know. Optional if `tags` is given."},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only items carrying these tags (lower-cased server-side). Optional if `query` is given.",
+                },
+                "tags_mode": {
+                    "type": "string",
+                    "enum": ["any", "all"],
+                    "description": "`any` (default): at least one tag matches. `all`: every tag must be present.",
+                },
+                "limit": {"type": "integer", "description": "Max items to return. Default 5, server cap 50."},
+                "include_disabled": {
+                    "type": "boolean",
+                    "description": "Default false. true also returns items an operator switched off.",
+                },
+            },
+            "required": [],
         },
     },
     {

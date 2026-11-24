@@ -21,6 +21,7 @@ from . import (
     label_key_push,
     mcp_config,
     playground_key_push,
+    qa_sync,
     routes as routes_mod,
     sources_sync,
 )
@@ -46,6 +47,7 @@ class KnowledgeableAppPlugin:
         # resolution, same read-fresh-every-tick rule as `forwarding.configure`
         # above.
         sources_sync.configure(lambda: ctx.config or {}, ctx.package_dir)
+        qa_sync.configure(lambda: ctx.config or {}, ctx.package_dir)
 
         ctx.routes.register(routes_mod.build_routes(ctx))
 
@@ -79,6 +81,10 @@ class KnowledgeableAppPlugin:
         self._sources_sync_delta_task = asyncio.create_task(sources_sync.run_delta_forever())
         self._sources_sync_reconcile_task = asyncio.create_task(sources_sync.run_reconcile_forever())
 
+        # Q&A registry (design ref qa-section-design-v2): mirror every installed
+        # app's contributes.qa into aw-knowledgeable (see qa_sync.py).
+        self._qa_sync_task = asyncio.create_task(qa_sync.run_forever())
+
         log.info(
             "aw-app-knowledgeable activated: mcp server=%s, tools=%s, base_url=%s, secret=%s, "
             "playground-key re-assert every %ss, ingest-key re-assert every %ss, "
@@ -101,6 +107,7 @@ class KnowledgeableAppPlugin:
             "_label_key_task",
             "_sources_sync_delta_task",
             "_sources_sync_reconcile_task",
+            "_qa_sync_task",
         ):
             task = getattr(self, attr, None)
             if task is not None:

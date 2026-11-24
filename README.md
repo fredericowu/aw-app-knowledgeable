@@ -1,7 +1,7 @@
 # aw-app-knowledgeable
 
 Ingestion + retrieval MCP connector for [fredericowu/aw-knowledgeable](https://github.com/fredericowu/aw-knowledgeable),
-the standalone Neo4j knowledge-graph service. 8 tools, gateway-prefixed
+the standalone Neo4j knowledge-graph service. 9 tools, gateway-prefixed
 `aw__aw_knowledgeable__*`, mapped 1:1 onto aw-knowledgeable's own API:
 
 | Tool | aw-knowledgeable endpoint |
@@ -13,7 +13,8 @@ the standalone Neo4j knowledge-graph service. 8 tools, gateway-prefixed
 | `list_documents` | `GET /api/documents` |
 | `search_nodes` | `GET /api/search?q=&exclude=&limit=` |
 | `search_graph` | `GET /api/search?q=&mode=&limit=&beam_width=&min_score=&related_vias=&collection=&anchor=&anchor_depth=` |
-| `knowledge_search` | `POST /api/knowledge/search` — multi-query, multi-arm, RRF-fused retrieval + optional synthesis |
+| `knowledge_search` | `POST /api/knowledge/search` — multi-query, multi-arm, RRF-fused retrieval + optional synthesis. Also searches the Q&A registry (`include_qa`, default true, or `mode: "qa"`); Q&A hits carry `source: "qa"` |
+| `qa_search` | `POST /api/qa/search` — the curated Q&A registry (`query` and/or `tags`; read-only) |
 
 This app has **no Neo4j driver and no Cypher** — it is a thin HTTP client. See
 `docs/design/aw-knowledgeable-infra.md` §10 (decision D2) in `aw-workspace` for
@@ -21,6 +22,17 @@ the full design: why this is Tier-1 rather than Tier-2 or a stdio-bridge, why
 reachability works by container **name** (never an IP), and why the tenant a
 call lands in comes from this app's own credential, never from the calling
 agent.
+
+## Contributing Q&A (`contributes.qa`)
+
+An installed app can seed the workspace's Q&A registry. Declare
+`"contributes": {"qa": {"path": "qa/items.json"}}` in its `aw-app.json`; the
+file is a JSON list of `{id, question, answer, tags}` (`id` stable, unique per
+app). `knowledgeable_app/qa_sync.py` reads every installed app's file every
+~6 minutes and `PUT`s the lot to `/api/qa/sync` as an exact mirror, so edits and
+removals propagate and unchanged items cost nothing. A bad file or item from
+one app is logged (with the backend's per-item `rejected` reason) and never
+blocks the others. This app seeds `qa/knowledgeable.json`.
 
 ## Install
 

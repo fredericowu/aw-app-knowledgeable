@@ -40,6 +40,9 @@ _DISPATCH = {
     # key-auth GET mirrored 1:1, same dispatch shape as `knowledge_sources`
     # above: no composition, straight to client.py.
     "knowledge_sources_catalog": client.knowledge_sources_catalog,
+    # Q&A registry (design ref qa-section-design-v2) — thin POST /api/qa/search;
+    # read-only, no write tools for agents.
+    "qa_search": client.qa_search,
     # §9 step 4 (docs/design/execution-history-in-production-neo4j.md) — the
     # agent-facing surface over the exec subgraph the sync engine's own calls
     # in client.py already populate. Same dispatch shape as every read-only
