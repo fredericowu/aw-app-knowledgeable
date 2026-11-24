@@ -71,7 +71,8 @@
         "get_graph",
         "list_documents",
         "search_nodes",
-        "search_graph"
+        "search_graph",
+        "qa_search"
       ]
     },
     "tasks": [
@@ -156,7 +157,10 @@
         "label": "Exec-sync scrub/vault/indexing-policy coverage",
         "route": "/exec-sync/doctor"
       }
-    ]
+    ],
+    "qa": {
+      "path": "qa/knowledgeable.json"
+    }
   },
   "config_schema": {
     "type": "object",

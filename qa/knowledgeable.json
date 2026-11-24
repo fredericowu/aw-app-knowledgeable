@@ -1,0 +1,68 @@
+[
+  {
+    "id": "which-tool-for-questions",
+    "question": "Which tool should I use to answer a question from the knowledge base?",
+    "answer": "Use knowledge_search for any real question: it plans sub-queries, retrieves across vector, lexical, graph and the curated Q&A registry, fuses them and can write a cited answer. Use qa_search only when you want the vetted answer to a known question, or to browse Q&A by tag.",
+    "tags": [
+      "knowledgeable",
+      "knowledge-search",
+      "qa"
+    ]
+  },
+  {
+    "id": "knowledge-search-limit-floor",
+    "question": "Why does knowledge_search ignore a limit below 20?",
+    "answer": "The server clamps limit up to a floor of 20 because this corpus returns a measurably worse result set below it. Always read the response's `effective` and `clamped` fields to see what actually ran, instead of assuming the value you sent was honoured.",
+    "tags": [
+      "knowledgeable",
+      "knowledge-search"
+    ]
+  },
+  {
+    "id": "knowledge-search-answer-null",
+    "question": "knowledge_search returned answer: null. Is the search broken?",
+    "answer": "Not necessarily. `answer` is null when synthesize=false or when the synthesis step timed out or was skipped by the budget. Retrieval still ran: read `chunks` and `citations`, and check `clamped` for the reason.",
+    "tags": [
+      "knowledgeable",
+      "knowledge-search"
+    ]
+  },
+  {
+    "id": "qa-hits-in-knowledge-search",
+    "question": "How do I tell a Q&A hit from a document hit in knowledge_search results?",
+    "answer": "Q&A hits carry `source: \"qa\"` and a `qa_id`; their text is `Q: ...` followed by `A: ...` and there is no real document behind them. Pass include_qa=false to leave them out, or mode=\"qa\" to search only the Q&A registry.",
+    "tags": [
+      "knowledgeable",
+      "qa",
+      "knowledge-search"
+    ]
+  },
+  {
+    "id": "qa-search-arguments",
+    "question": "How do I call qa_search?",
+    "answer": "Give `query` (semantic plus keyword match), `tags` (exact tag filter, with tags_mode any or all), or both; at least one is required. `limit` defaults to 5. Items an operator switched off are hidden unless include_disabled is true. Each item reports its `origin`: manual or app.",
+    "tags": [
+      "knowledgeable",
+      "qa"
+    ]
+  },
+  {
+    "id": "add-app-qa-items",
+    "question": "How does an app contribute Q&A items?",
+    "answer": "Declare `contributes.qa` as `{\"path\": \"qa/items.json\"}` in aw-app.json, pointing at a JSON list of `{id, question, answer, tags}`. The Knowledgeable Connector mirrors every installed app's file into the registry: removed items disappear, edited items are re-indexed, and operators can disable an app item but not edit or delete it.",
+    "tags": [
+      "knowledgeable",
+      "qa",
+      "apps"
+    ]
+  },
+  {
+    "id": "qa-cannot-be-written-by-agents",
+    "question": "Can an agent add or edit Q&A items?",
+    "answer": "No. The agent tools only read. Operators write manual items in the Q&A page of the Knowledgeable UI, and apps contribute theirs through contributes.qa.",
+    "tags": [
+      "knowledgeable",
+      "qa"
+    ]
+  }
+]

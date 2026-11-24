@@ -105,12 +105,13 @@ def _fresh_fake_client(monkeypatch):
     client.configure(lambda: client.DEFAULT_BASE_URL, lambda: "")
 
 
-def test_all_fifteen_tools_are_advertised_and_dispatchable():
+def test_all_sixteen_tools_are_advertised_and_dispatchable():
     names = {t["name"] for t in client.TOOLS_SCHEMA}
     assert names == {
         "upload_document", "create_node", "create_link",
         "get_graph", "list_documents", "search_nodes", "search_graph",
         "knowledge_search", "knowledge_sources", "knowledge_sources_catalog",
+        "qa_search",
         "search_execution_graph", "exec_run_detail",
         "list_pending_deletions", "approve_pending_deletions",
         "decline_pending_deletions",
@@ -995,7 +996,7 @@ def test_initialize_and_tools_list():
     init = _run(http_handler.handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
     assert init["result"]["serverInfo"]["name"] == "aw-knowledgeable"
     listed = _run(http_handler.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
-    assert len(listed["result"]["tools"]) == 15
+    assert len(listed["result"]["tools"]) == 16
 
 
 def test_initialized_notification_gets_no_response():
@@ -1247,3 +1248,102 @@ def test_knowledge_sources_catalog_dispatches_through_the_mcp_handler():
     }))
     assert resp["result"]["isError"] is False
     assert "workspaces" in resp["result"]["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Q&A registry (design ref qa-section-design-v2): include_qa / mode qa on
+# knowledge_search, and the qa_search tool
+# ---------------------------------------------------------------------------
+
+
+def _schema(name):
+    return next(t for t in client.TOOLS_SCHEMA if t["name"] == name)["inputSchema"]["properties"]
+
+
+def test_knowledge_search_schema_advertises_include_qa_and_mode_qa():
+    props = _schema("knowledge_search")
+    assert props["include_qa"]["type"] == "boolean"
+    assert "qa" in props["mode"]["enum"]
+    assert 'source: "qa"' in props["include_qa"]["description"]
+
+
+def test_knowledge_search_forwards_include_qa_false_explicitly():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"chunks": []}))
+    _run(client.knowledge_search({"query": "sushi", "include_qa": False}))
+    assert _FakeAsyncClient._CALLS[0]["json"] == {"query": "sushi", "include_qa": False}
+
+
+def test_knowledge_search_forwards_include_qa_true_and_mode_qa():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"chunks": []}))
+    _run(client.knowledge_search({"query": "sushi", "include_qa": True, "mode": "qa"}))
+    assert _FakeAsyncClient._CALLS[0]["json"] == {"query": "sushi", "mode": "qa", "include_qa": True}
+
+
+def test_knowledge_search_omits_include_qa_when_the_caller_did_not_send_it():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"chunks": []}))
+    _run(client.knowledge_search({"query": "sushi"}))
+    assert "include_qa" not in _FakeAsyncClient._CALLS[0]["json"]
+
+
+def test_dispatch_knowledge_search_forwards_include_qa_through_the_composer():
+    """The real `_DISPATCH` entry (forwarding.compose_knowledge_search), not
+    client.knowledge_search directly."""
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"chunks": []}))
+    _run(http_handler._DISPATCH["knowledge_search"]({"query": "sushi", "include_qa": False}))
+    assert _FakeAsyncClient._CALLS[0]["json"]["include_qa"] is False
+
+
+def test_qa_search_requires_query_or_tags():
+    for args in ({}, {"query": "   "}, {"tags": []}, {"limit": 3}):
+        text, is_error = _run(client.qa_search(args))
+        assert is_error
+        assert "at least one of query or tags" in text
+    assert _FakeAsyncClient._CALLS == []
+
+
+def test_qa_search_posts_only_the_given_fields():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"items": [], "total_matched": 0}))
+    text, is_error = _run(client.qa_search({"query": " restart? "}))
+    assert not is_error
+    call = _FakeAsyncClient._CALLS[0]
+    assert call["method"] == "POST"
+    assert call["url"].endswith("/api/qa/search")
+    assert call["json"] == {"query": "restart?"}
+
+
+def test_qa_search_forwards_every_field_and_drops_gateway_extras():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"items": []}))
+    _run(client.qa_search({
+        "query": "q", "tags": ["a", "b"], "tags_mode": "all", "limit": 3,
+        "include_disabled": True, "_gateway_caller_run_id": "run-xyz",
+    }))
+    assert _FakeAsyncClient._CALLS[0]["json"] == {
+        "query": "q", "tags": ["a", "b"], "tags_mode": "all", "limit": 3, "include_disabled": True,
+    }
+
+
+def test_qa_search_tags_only_is_allowed():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"items": []}))
+    text, is_error = _run(client.qa_search({"tags": "knowledgeable"}))
+    assert not is_error
+    assert _FakeAsyncClient._CALLS[0]["json"] == {"tags": ["knowledgeable"]}
+
+
+def test_qa_search_reports_the_backend_error_text():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(503, {"detail": "index unavailable"}))
+    text, is_error = _run(client.qa_search({"query": "x"}))
+    assert is_error
+    assert "qa_search failed" in text and "index unavailable" in text
+
+
+def test_qa_search_is_dispatched_over_mcp_and_is_read_only():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"items": [{"id": "1"}]}))
+    resp = _run(http_handler.handle_request({
+        "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+        "params": {"name": "qa_search", "arguments": {"query": "x"}},
+    }))
+    assert resp["result"]["isError"] is False
+    assert '"id": "1"' in resp["result"]["content"][0]["text"]
+    # no agent write tool for Q&A
+    assert not [n for n in http_handler._DISPATCH if n.startswith("qa_") and n != "qa_search"]
+    assert _schema("qa_search").keys() == {"query", "tags", "tags_mode", "limit", "include_disabled"}

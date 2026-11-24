@@ -50,7 +50,24 @@ Key knobs worth knowing before calling it:
 - `budget_ms` — default 20000, capped at 25000 (the production tunnel cuts requests around 30s regardless). Past budget, synthesis is skipped and retrieval is still returned — never a timeout, never a 500.
 - `synthesize` — set `false` for the cheap path: just fused chunks + citations, no LLM write-up.
 - **Always read the response's `effective` and `clamped` fields.** They say what *actually* ran — a knob you sent is advisory, not a guarantee. A real example: at low budget the planner call can be skipped (`clamped` says why) and the synthesis call can time out (`answer` comes back `null`) while the fused `chunks`/`citations` are still fully populated and usable.
+- `include_qa` (default true) — the curated Q&A registry is searched alongside the document arms. Q&A hits come back in `chunks` with **`source: "qa"`** (plus a `qa_id`; the text is `Q: …` / `A: …`, there is no real document behind one). Pass `include_qa: false` to exclude them, or `mode: "qa"` to search only Q&A. Skipped automatically when `collection` or document `filters` are set.
 - `include_code=true` additionally asks the workspace's code graph (when installed) and returns it in a separate `code` section — never fused into `chunks`, a disjoint key space from the knowledge graph.
+
+### Q&A registry — curated, vetted answers
+
+| Tool | Use it for |
+|---|---|
+| `qa_search(query?, tags?, tags_mode, limit, include_disabled)` | Look up the vetted answer to a known kind of question, or browse Q&A by tag. Give `query`, `tags`, or both (at least one). `tags_mode` is `any` (default) or `all`; `limit` defaults to 5 (cap 50). Returns `{items: [{id, question, answer, tags, origin, score, …}]}`; `origin` is `manual` (an operator wrote it in the Q&A page) or `app` (an installed app contributed it). Disabled items are hidden unless `include_disabled` is true. **Read-only — there is no agent write tool for Q&A.** |
+
+`knowledge_search` already folds Q&A in (see `include_qa` above); reach for `qa_search` when you want only the curated answers.
+
+**For app authors — contributing Q&A.** In your `aw-app.json` declare `"contributes": {"qa": {"path": "qa/items.json"}}`. The file is a JSON list:
+
+```json
+[{"id": "stable-id", "question": "…", "answer": "…", "tags": ["my-app"]}]
+```
+
+`id` is yours and must stay stable (it keys the row); tags are lower-cased. The Knowledgeable Connector mirrors every installed app's file every few minutes — exact mirror: delete an item from the file and it disappears, edit it and it is re-indexed. A malformed item is rejected with a reason in the Connector log and never blocks the others; operators can disable an app item but not edit or delete it.
 
 ### Lower-level graph retrieval and curation
 
