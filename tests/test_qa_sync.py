@@ -91,10 +91,41 @@ def test_collect_reads_every_apps_items_in_wire_shape(_env):
     assert items[0] == {"app_slug": "alpha", "external_id": "1", "question": "q 1", "answer": "a 1", "tags": ["t"]}
 
 
-def test_app_slug_is_the_manifest_id(_env):
+def test_app_slug_is_the_installed_directory_name(_env):
     _app(_env, "dirname", [_item("1")], app_id="real-id")
     items, _ = qa_sync.collect()
-    assert items[0]["app_slug"] == "real-id"
+    assert items[0]["app_slug"] == "dirname"
+
+
+def test_update_backups_and_non_slug_dirs_are_not_scanned(_env):
+    """The updater parks the old package as <slug>.old during a swap and
+    operators leave <slug>.stale-*-bak copies: reading them would re-send
+    entries the new package removed (the backend keeps whatever is in the
+    snapshot)."""
+    _app(_env, "alpha", [_item("current")])
+    _app(_env, "alpha.old", [_item("current"), _item("removed-in-new-version")], app_id="alpha")
+    _app(_env, "alpha.stale-20261106-bak", [_item("ancient")], app_id="alpha")
+    _app(_env, ".hidden", [_item("h")])
+    (_env / "somefile").write_text("x")
+    items, problems = qa_sync.collect()
+    assert [(i["app_slug"], i["external_id"]) for i in items] == [("alpha", "current")]
+    assert problems == []
+
+
+def test_unlistable_apps_root_is_a_failed_scan_not_an_empty_snapshot(_env, monkeypatch, tmp_path):
+    monkeypatch.setenv("AW_APPS_ROOT", str(tmp_path / "does-not-exist"))
+    with pytest.raises(qa_sync.ScanFailed):
+        qa_sync.collect()
+    result = _run(qa_sync.sync_once())
+    assert result["status"] == "scan_failed"
+    assert _FakeHttp._CALLS == []  # nothing sent: an empty PUT would delete every app row
+
+
+def test_a_successful_scan_of_an_empty_apps_dir_sends_the_empty_list(_env):
+    _FakeHttp._QUEUE.append(_Resp(200, {"deleted": 0}))
+    result = _run(qa_sync.sync_once())
+    assert result["status"] == "ok"
+    assert _FakeHttp._CALLS[0]["json"]["items"] == []
 
 
 def test_one_apps_broken_file_never_blocks_the_others(_env):

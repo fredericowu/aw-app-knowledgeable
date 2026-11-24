@@ -73,21 +73,38 @@ def _read_json(path: str) -> Any:
         return json.load(f)
 
 
+class ScanFailed(Exception):
+    """The apps directory could not be listed. Not the same as "no app
+    contributes anything": an empty snapshot is an instruction to the backend
+    to delete every app-origin row, so a failed scan must send nothing."""
+
+
 def collect() -> tuple[list[dict], list[str]]:
     """Every installed app's declared Q&A items, wire-shaped
     (``app_slug``/``external_id``/``question``/``answer``/``tags``), plus the
-    problems met on the way. Never raises: a broken app contributes nothing
-    and shows up in the problem list."""
+    problems met on the way. A broken *app* contributes nothing and shows up
+    in the problem list; an unlistable apps root raises ``ScanFailed``.
+
+    Only canonical installed package directories are scanned: the directory
+    name must be a valid app slug. The updater parks the previous package as
+    ``<slug>.old`` for the length of a swap (and operators leave
+    ``<slug>.stale-*-bak`` copies) — reading those would report the same app
+    twice, with entries the new package removed. The app slug is the
+    directory name for the same reason."""
     root = forwarding._apps_root()
     items: list[dict] = []
     problems: list[str] = []
     try:
         names = sorted(os.listdir(root))
     except OSError as exc:
-        return [], [f"cannot list apps root {root}: {exc}"]
+        raise ScanFailed(f"cannot list apps root {root}: {exc}") from exc
 
     for name in names:
+        if not forwarding.APP_SLUG_RE.match(name):
+            continue
         app_dir = os.path.join(root, name)
+        if not os.path.isdir(app_dir):
+            continue
         manifest_path = os.path.join(app_dir, "aw-app.json")
         if not os.path.isfile(manifest_path):
             continue
@@ -117,7 +134,6 @@ def collect() -> tuple[list[dict], list[str]]:
         if not isinstance(doc, list):
             problems.append(f"{name}: Q&A file '{rel}' must be a JSON list")
             continue
-        app_slug = manifest.get("id") if isinstance(manifest.get("id"), str) and manifest.get("id") else name
         for i, raw in enumerate(doc):
             ext = raw.get("id") if isinstance(raw, dict) else None
             if not isinstance(ext, str) or not ext.strip():
@@ -125,7 +141,7 @@ def collect() -> tuple[list[dict], list[str]]:
                 continue
             items.append(
                 {
-                    "app_slug": app_slug,
+                    "app_slug": name,
                     "external_id": ext,
                     "question": raw.get("question"),
                     "answer": raw.get("answer"),
@@ -154,7 +170,11 @@ async def _put_sync(body: dict) -> tuple[dict | None, int, str | None]:
 
 
 async def sync_once() -> dict:
-    items, problems = collect()
+    try:
+        items, problems = collect()
+    except ScanFailed as exc:
+        log.warning("qa_sync: %s — skipping this push (a failed scan is not an empty snapshot)", exc)
+        return {"status": "scan_failed", "error": str(exc), "item_count": 0, "problems": []}
     for problem in problems:
         log.warning("qa_sync: %s", problem)
     body = {
