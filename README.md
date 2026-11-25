@@ -15,6 +15,7 @@ the standalone Neo4j knowledge-graph service. 9 tools, gateway-prefixed
 | `search_graph` | `GET /api/search?q=&mode=&limit=&beam_width=&min_score=&related_vias=&collection=&anchor=&anchor_depth=` |
 | `knowledge_search` | `POST /api/knowledge/search` — multi-query, multi-arm, RRF-fused retrieval + optional synthesis. Also searches the Q&A registry (`include_qa`, default true, or `mode: "qa"`); Q&A hits carry `source: "qa"` |
 | `qa_search` | `POST /api/qa/search` — the curated Q&A registry (`query` and/or `tags`; read-only) |
+| `qa_list_tags` | `GET /api/qa/tags` — every tag with its Q&A count plus a "Not Tagged" entry; documents have no tags (`doc_count` 0, `documents_total` reported separately) |
 | `qa_propose_create` / `qa_propose_update` / `qa_propose_delete` / `qa_propose_tag_rename` | `POST /api/qa/proposals` — agent change requests; nothing is live until a person approves it in the Q&A page |
 | `qa_list_proposals` | `GET /api/qa/proposals` — pending and decided requests |
 

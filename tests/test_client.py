@@ -111,7 +111,7 @@ def test_all_tools_are_advertised_and_dispatchable():
         "upload_document", "create_node", "create_link",
         "get_graph", "list_documents", "search_nodes", "search_graph",
         "knowledge_search", "knowledge_sources", "knowledge_sources_catalog",
-        "qa_search",
+        "qa_search", "qa_list_tags",
         "qa_propose_create", "qa_propose_update", "qa_propose_delete",
         "qa_propose_tag_rename", "qa_list_proposals",
         "search_execution_graph", "exec_run_detail",
@@ -1000,7 +1000,7 @@ def test_initialize_and_tools_list():
     init = _run(http_handler.handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
     assert init["result"]["serverInfo"]["name"] == "aw-knowledgeable"
     listed = _run(http_handler.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
-    assert len(listed["result"]["tools"]) == 21
+    assert len(listed["result"]["tools"]) == 22
 
 
 def test_initialized_notification_gets_no_response():
@@ -1349,7 +1349,7 @@ def test_qa_search_is_dispatched_over_mcp_and_is_read_only():
     assert resp["result"]["isError"] is False
     assert '"id": "1"' in resp["result"]["content"][0]["text"]
     # no agent write tool for Q&A
-    assert not [n for n in http_handler._DISPATCH if n.startswith("qa_") and n != "qa_search"]
+    assert not [n for n in http_handler._DISPATCH if n.startswith("qa_") and n not in ("qa_search", "qa_list_tags")]
     assert _schema("qa_search").keys() == {"query", "tags", "tags_mode", "limit", "include_disabled"}
 
 
@@ -1453,3 +1453,13 @@ def test_seed_item_keeps_its_id_and_no_text_claims_agents_are_read_only():
     assert not seed["answer"].startswith("No.")
     for f in ("skills/aw-knowledgeable/SKILL.md", "README.md"):
         assert "no agent write tool" not in (root / f).read_text()
+
+
+def test_qa_list_tags_gets_the_tags_route_and_reports_old_backend():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"tags": [{"tag": "git", "qa_count": 2, "doc_count": 0}]}))
+    text, is_error = _call("qa_list_tags", {})
+    assert not is_error and _json.loads(text)["tags"][0]["tag"] == "git"
+    assert _FakeAsyncClient._CALLS[0]["url"].endswith("/api/qa/tags")
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(404, {"detail": "not found"}))
+    text, is_error = _call("qa_list_tags", {})
+    assert is_error and "does not support" in text

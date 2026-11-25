@@ -515,6 +515,19 @@ async def push_label_key(value: str) -> tuple[bool, str | None]:
     return bool(data and data.get("ok")), None
 
 
+async def qa_list_tags(args: dict) -> tuple[str, bool]:
+    """GET /api/qa/tags — tag inventory: Q&A count per tag plus a "Not Tagged"
+    bucket. Documents have no tags, so ``doc_count`` is 0 per tag and the
+    document total comes back separately. Read-only; takes no arguments."""
+    data, err = await _get("/api/qa/tags")
+    if err:
+        # An old backend routes this GET to `/api/qa/{item_id}` (lowercase 404).
+        if err.startswith("HTTP 404"):
+            return "qa_list_tags failed: the backend does not support /api/qa/tags yet (update aw-knowledgeable)", True
+        return f"qa_list_tags failed: {err}", True
+    return _as_text(data), False
+
+
 # ---------------------------------------------------------------------------
 # The exec-history projection (docs/design/execution-history-in-production-
 # neo4j.md §4). Not in ``TOOLS_SCHEMA`` below — these are the sync engine's
@@ -2067,6 +2080,11 @@ TOOLS_SCHEMA = [
             },
             "required": [],
         },
+    },
+    {
+        "name": "qa_list_tags",
+        "description": ("List every Q&A tag with how many enabled Q&A items carry it (`qa_count`), plus a \"Not Tagged\" entry for untagged items. Documents carry no tags, so `doc_count` is always 0 per tag; the total number of documents is reported separately as `documents_total`. Takes no arguments. Read-only."),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "qa_propose_create",
