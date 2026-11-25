@@ -41,7 +41,7 @@ _DISPATCH = {
     # above: no composition, straight to client.py.
     "knowledge_sources_catalog": client.knowledge_sources_catalog,
     # Q&A registry (design ref qa-section-design-v2) — thin POST /api/qa/search;
-    # read-only, no write tools for agents.
+    # read-only. Agent writes are change requests, see `_DISPATCH_WITH_ACTOR`.
     "qa_search": client.qa_search,
     # §9 step 4 (docs/design/execution-history-in-production-neo4j.md) — the
     # agent-facing surface over the exec subgraph the sync engine's own calls
@@ -59,6 +59,16 @@ _DISPATCH = {
 _DISPATCH_WITH_DB = {
     "approve_pending_deletions": pending_deletions.approve_pending_deletions,
     "decline_pending_deletions": pending_deletions.decline_pending_deletions,
+}
+
+#: Q&A change requests (design ref qa-agent-proposals-v1): need the caller
+#: actor (gateway `x-aw-caller-agent` / run id) as `proposed_by`, but no `db`.
+_DISPATCH_WITH_ACTOR = {
+    "qa_propose_create": client.qa_propose_create,
+    "qa_propose_update": client.qa_propose_update,
+    "qa_propose_delete": client.qa_propose_delete,
+    "qa_propose_tag_rename": client.qa_propose_tag_rename,
+    "qa_list_proposals": client.qa_list_proposals,
 }
 
 _NO_SECRET = (
@@ -109,7 +119,12 @@ async def handle_request(request: dict, *, db=None, actor: str = "unknown") -> d
     args = params.get("arguments") or {}
 
     needs_db = name in _DISPATCH_WITH_DB
-    handler = _DISPATCH_WITH_DB.get(name) if needs_db else _DISPATCH.get(name)
+    needs_actor = name in _DISPATCH_WITH_ACTOR
+    handler = (
+        _DISPATCH_WITH_DB.get(name)
+        if needs_db
+        else _DISPATCH_WITH_ACTOR.get(name) if needs_actor else _DISPATCH.get(name)
+    )
     if not handler:
         return _result(req_id, f"Unknown tool: {name}", True)
 
@@ -119,6 +134,8 @@ async def handle_request(request: dict, *, db=None, actor: str = "unknown") -> d
     try:
         if needs_db:
             text, is_error = await handler(args, db, actor)
+        elif needs_actor:
+            text, is_error = await handler(args, actor)
         else:
             text, is_error = await handler(args)
     except Exception as exc:  # noqa: BLE001 — last resort, must not 500 the route
