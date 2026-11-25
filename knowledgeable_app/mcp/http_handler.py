@@ -43,6 +43,7 @@ _DISPATCH = {
     # Q&A registry (design ref qa-section-design-v2) — thin POST /api/qa/search;
     # read-only. Agent writes are change requests, see `_DISPATCH_WITH_ACTOR`.
     "qa_search": client.qa_search,
+    "qa_list_tags": client.qa_list_tags,
     # §9 step 4 (docs/design/execution-history-in-production-neo4j.md) — the
     # agent-facing surface over the exec subgraph the sync engine's own calls
     # in client.py already populate. Same dispatch shape as every read-only

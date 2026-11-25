@@ -73,6 +73,7 @@
         "search_nodes",
         "search_graph",
         "qa_search",
+        "qa_list_tags",
         "qa_propose_create",
         "qa_propose_update",
         "qa_propose_delete",
