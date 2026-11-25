@@ -25,6 +25,8 @@ from typing import Callable
 
 import httpx
 
+from ..workspace_env import workspace_env
+
 DEFAULT_BASE_URL = "http://aw-knowledgeable:8090"
 
 #: HTTP timeout for a `knowledge_sources` call that did NOT pass a
@@ -1392,8 +1394,9 @@ async def qa_search(args: dict) -> tuple[str, bool]:
     ``qa-section-design-v2``). A thin forward, field by field: the backend owns
     validation, the score floor and the exact/lexical fusion. At least one of
     ``query``/``tags`` is required (checked here only so the caller gets the
-    reason without a round trip; the backend enforces it too). Read-only —
-    there is deliberately no agent write tool for Q&A."""
+    reason without a round trip; the backend enforces it too). Read-only: agents
+    change Q&A only through the `qa_propose_*` tools, which file a change request
+    for a person to review."""
     query = (args.get("query") or "").strip() if isinstance(args.get("query"), str) else ""
     tags = args.get("tags")
     if isinstance(tags, str):
@@ -1417,6 +1420,121 @@ async def qa_search(args: dict) -> tuple[str, bool]:
     if err:
         return f"qa_search failed: {err}", True
     return _as_text(data), False
+
+
+# ---------------------------------------------------------------------------
+# Q&A change requests (design ref qa-agent-proposals-v1). Agents never write
+# the registry: every tool below files a PROPOSAL that a person approves or
+# rejects in the Q&A page. Nothing proposed is searchable until then.
+# ---------------------------------------------------------------------------
+
+_NOT_LIVE = "This change is NOT live: it is pending review and a person must approve it in the Q&A page."
+
+
+def _proposals_unsupported(err: str) -> bool:
+    """A backend without the routes answers 405 (POST /api/qa/proposals has no
+    POST handler on an old build) or a bare FastAPI 404 `Not Found`; a real
+    unknown-item 404 carries the lowercase detail `not found`."""
+    return err.startswith("HTTP 405") or err in ("HTTP 404", "HTTP 404: Not Found")
+
+
+def _proposal_error(tool: str, err: str) -> tuple[str, bool]:
+    if _proposals_unsupported(err):
+        return (
+            f"{tool} failed: the aw-knowledgeable backend does not support Q&A proposals yet "
+            "(update the backend, then retry)",
+            True,
+        )
+    return f"{tool} failed: {err}", True
+
+
+def _str_list(value) -> list | None:
+    if value is None:
+        return None
+    return [value] if isinstance(value, str) else value
+
+
+async def _propose(tool: str, body: dict, args: dict, actor: str) -> tuple[str, bool]:
+    body["proposed_by"] = (actor or "").strip() or "unknown"
+    body["workspace_slug"] = workspace_env("AW_WORKSPACE") or "aw"
+    if isinstance(args.get("reason"), str) and args["reason"].strip():
+        body["reason"] = args["reason"].strip()
+    data, err = await _post_json("/api/qa/proposals", body)
+    if err:
+        return _proposal_error(tool, err)
+    out = {
+        "proposal_id": data.get("proposal_id"),
+        "status": data.get("status", "pending"),
+        "duplicate": bool(data.get("duplicate")),
+        "message": _NOT_LIVE,
+    }
+    return _as_text(out), False
+
+
+async def qa_propose_create(args: dict, actor: str = "unknown") -> tuple[str, bool]:
+    """POST /api/qa/proposals {kind: create}. Run `qa_search` first."""
+    body = {"kind": "create", "question": args.get("question"), "answer": args.get("answer")}
+    if args.get("tags") is not None:
+        body["tags"] = _str_list(args["tags"])
+    return await _propose("qa_propose_create", body, args, actor)
+
+
+async def qa_propose_update(args: dict, actor: str = "unknown") -> tuple[str, bool]:
+    """POST /api/qa/proposals {kind: update}. Also the per-item tag add/remove tool."""
+    if not args.get("id"):
+        return "id is required", True
+    body: dict = {"kind": "update", "target_id": args["id"]}
+    for key in ("question", "answer"):
+        if args.get(key) is not None:
+            body[key] = args[key]
+    for key in ("add_tags", "remove_tags"):
+        if args.get(key) is not None:
+            body[key] = _str_list(args[key])
+    if len(body) == 2:
+        return "at least one of question, answer, add_tags or remove_tags is required", True
+    return await _propose("qa_propose_update", body, args, actor)
+
+
+async def qa_propose_delete(args: dict, actor: str = "unknown") -> tuple[str, bool]:
+    """POST /api/qa/proposals {kind: delete}."""
+    if not args.get("id"):
+        return "id is required", True
+    return await _propose("qa_propose_delete", {"kind": "delete", "target_id": args["id"]}, args, actor)
+
+
+async def qa_propose_tag_rename(args: dict, actor: str = "unknown") -> tuple[str, bool]:
+    """POST /api/qa/proposals {kind: tag_rename}. Applies tenant-wide to non-app items."""
+    if not args.get("from") or not args.get("to"):
+        return "from and to are required", True
+    body = {"kind": "tag_rename", "from": args["from"], "to": args["to"]}
+    return await _propose("qa_propose_tag_rename", body, args, actor)
+
+
+async def qa_list_proposals(args: dict, actor: str = "unknown") -> tuple[str, bool]:
+    """GET /api/qa/proposals — see what is pending and how decided ones ended."""
+    params: dict = {}
+    if args.get("status") is not None:
+        params["status"] = args["status"]
+    if args.get("limit") is not None:
+        params["limit"] = args["limit"]
+    data, err = await _get("/api/qa/proposals", params or None)
+    if err:
+        # An old backend routes this GET to `/api/qa/{item_id}` and answers a
+        # lowercase 404 "not found"; a real list never 404s.
+        if err.startswith("HTTP 404"):
+            return _proposal_error("qa_list_proposals", "HTTP 404")
+        return _proposal_error("qa_list_proposals", err)
+    slim = [
+        {
+            k: p.get(k)
+            for k in (
+                "id", "kind", "target_id", "payload", "reason", "proposed_by", "status",
+                "decided_by", "decided_at", "decision_note", "result_item_id", "created_at",
+            )
+        }
+        for p in data.get("proposals", [])
+    ]
+    return _as_text({"proposals": slim, "pending_total": data.get("pending_total")}), False
 
 
 def _as_text(data) -> str:
@@ -1922,7 +2040,9 @@ TOOLS_SCHEMA = [
             "documents (it also surfaces Q&A hits, with `source: \"qa\"`). Give "
             "`query` (semantic + keyword match), `tags` (exact tag filter), or both; "
             "at least one is required. Read-only. Returns {items: [{id, question, "
-            "answer, tags, origin, score, ...}]}; `origin` is `manual` or `app`. "
+            "answer, tags, origin, score, ...}]}; `origin` is `manual` (a person "
+            "wrote it), `app` (an installed app contributed it) or `agent` (an "
+            "agent proposed it and a person approved it). "
             "Disabled items are hidden unless `include_disabled` is true."
         ),
         "inputSchema": {
@@ -1945,6 +2065,51 @@ TOOLS_SCHEMA = [
                     "description": "Default false. true also returns items an operator switched off.",
                 },
             },
+            "required": [],
+        },
+    },
+    {
+        "name": "qa_propose_create",
+        "description": ("Propose a NEW Q&A item. Files a change request: NOTHING is live or searchable until a person approves it in the Q&A page. Run `qa_search` first so you do not propose a duplicate. Returns {proposal_id, status: \"pending\", duplicate}. "),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"question": {"type": "string", "description": "The question (max 500 chars)."}, "answer": {"type": "string", "description": "The answer, markdown (max 20000 chars)."}, "tags": {"type": "array", "items": {"type": "string"}, "description": "Lower-case slug tags, e.g. ops, manager (max 20)."}, "reason": {"type": "string", "description": "Why this change; shown to the reviewer."}},
+            "required": ["question", "answer"],
+        },
+    },
+    {
+        "name": "qa_propose_update",
+        "description": ("Propose an edit to an existing manual or agent-origin Q&A item (app-contributed items cannot be changed). This is also how you add or remove tags on one item: `add_tags` / `remove_tags` are applied to the item as it is when the reviewer approves. At least one change is required. Files a change request: NOTHING is live or searchable until a person approves it in the Q&A page. Run `qa_search` first so you do not propose a duplicate. Returns {proposal_id, status: \"pending\", duplicate}. "),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "description": "The Q&A item id (from qa_search)."}, "question": {"type": "string", "description": "New question text."}, "answer": {"type": "string", "description": "New answer text (markdown)."}, "add_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to add."}, "remove_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to remove."}, "reason": {"type": "string", "description": "Why this change; shown to the reviewer."}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "qa_propose_delete",
+        "description": ("Propose deleting a manual or agent-origin Q&A item (app-contributed items cannot be deleted). The item stays served until a person approves. Files a change request: NOTHING is live or searchable until a person approves it in the Q&A page. Run `qa_search` first so you do not propose a duplicate. Returns {proposal_id, status: \"pending\", duplicate}. "),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "description": "The Q&A item id."}, "reason": {"type": "string", "description": "Why this change; shown to the reviewer."}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "qa_propose_tag_rename",
+        "description": ("Propose renaming a tag on every manual and agent-origin item at once (app-contributed items keep their tags). Files a change request: NOTHING is live or searchable until a person approves it in the Q&A page. Run `qa_search` first so you do not propose a duplicate. Returns {proposal_id, status: \"pending\", duplicate}. "),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"from": {"type": "string", "description": "Existing tag."}, "to": {"type": "string", "description": "New tag."}, "reason": {"type": "string", "description": "Why this change; shown to the reviewer."}},
+            "required": ["from", "to"],
+        },
+    },
+    {
+        "name": "qa_list_proposals",
+        "description": ("List Q&A change requests so you can see what is pending and how decided ones ended (status, who decided, the reviewer's note, and `result_item_id` for an approved create). Default is every status, newest first."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["pending", "approved", "rejected"], "description": "Only this status."}, "limit": {"type": "integer", "description": "Max proposals (default 100, cap 500)."}},
             "required": [],
         },
     },

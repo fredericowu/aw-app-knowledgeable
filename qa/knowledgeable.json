@@ -59,7 +59,7 @@
   {
     "id": "qa-cannot-be-written-by-agents",
     "question": "Can an agent add or edit Q&A items?",
-    "answer": "No. The agent tools only read. Operators write manual items in the Q&A page of the Knowledgeable UI, and apps contribute theirs through contributes.qa.",
+    "answer": "Only by proposing. qa_propose_create, qa_propose_update (also adds or removes tags on one item), qa_propose_delete and qa_propose_tag_rename file a change request that is NOT live or searchable until a person approves it in the Pending review section of the Q&A page; qa_list_proposals shows the outcome. Agents cannot approve. Items contributed by an app (origin app) cannot be proposed against: change them in that app's contributes.qa file. Operators still write manual items directly in the Q&A page.",
     "tags": [
       "knowledgeable",
       "qa"

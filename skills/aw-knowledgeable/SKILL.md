@@ -57,7 +57,9 @@ Key knobs worth knowing before calling it:
 
 | Tool | Use it for |
 |---|---|
-| `qa_search(query?, tags?, tags_mode, limit, include_disabled)` | Look up the vetted answer to a known kind of question, or browse Q&A by tag. Give `query`, `tags`, or both (at least one). `tags_mode` is `any` (default) or `all`; `limit` defaults to 5 (cap 50). Returns `{items: [{id, question, answer, tags, origin, score, …}]}`; `origin` is `manual` (an operator wrote it in the Q&A page) or `app` (an installed app contributed it). Disabled items are hidden unless `include_disabled` is true. **Read-only — there is no agent write tool for Q&A.** |
+| `qa_search(query?, tags?, tags_mode, limit, include_disabled)` | Look up the vetted answer to a known kind of question, or browse Q&A by tag. Give `query`, `tags`, or both (at least one). `tags_mode` is `any` (default) or `all`; `limit` defaults to 5 (cap 50). Returns `{items: [{id, question, answer, tags, origin, score, …}]}`; `origin` is `manual` (an operator wrote it in the Q&A page), `app` (an installed app contributed it) or `agent` (an agent proposed it and a person approved it). Disabled items are hidden unless `include_disabled` is true. Read-only. |
+| `qa_propose_create(question, answer, tags?, reason?)`, `qa_propose_update(id, question?, answer?, add_tags?, remove_tags?, reason?)`, `qa_propose_delete(id, reason?)`, `qa_propose_tag_rename(from, to, reason?)` | **Propose** a change. Nothing is live or searchable until a person approves it in the Pending review section of the Q&A page; each returns `{proposal_id, status: "pending", duplicate}`. Run `qa_search` first to avoid duplicates. `qa_propose_update` is also the per-item tag add/remove tool. App-contributed items (`origin` `app`) are refused with 409: change them in the app's `contributes.qa` file. You cannot approve your own proposal. |
+| `qa_list_proposals(status?, limit?)` | See what is pending and how decided ones ended (status, decision note, `result_item_id`). |
 
 `knowledge_search` already folds Q&A in (see `include_qa` above); reach for `qa_search` when you want only the curated answers.
 

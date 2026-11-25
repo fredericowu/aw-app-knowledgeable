@@ -105,20 +105,24 @@ def _fresh_fake_client(monkeypatch):
     client.configure(lambda: client.DEFAULT_BASE_URL, lambda: "")
 
 
-def test_all_sixteen_tools_are_advertised_and_dispatchable():
+def test_all_tools_are_advertised_and_dispatchable():
     names = {t["name"] for t in client.TOOLS_SCHEMA}
     assert names == {
         "upload_document", "create_node", "create_link",
         "get_graph", "list_documents", "search_nodes", "search_graph",
         "knowledge_search", "knowledge_sources", "knowledge_sources_catalog",
         "qa_search",
+        "qa_propose_create", "qa_propose_update", "qa_propose_delete",
+        "qa_propose_tag_rename", "qa_list_proposals",
         "search_execution_graph", "exec_run_detail",
         "list_pending_deletions", "approve_pending_deletions",
         "decline_pending_deletions",
     }
     # approve/decline need `db` (the audit trail) so they dispatch through
     # their own table — see http_handler.py's `_DISPATCH_WITH_DB` docstring.
-    assert names == set(http_handler._DISPATCH) | set(http_handler._DISPATCH_WITH_DB)
+    assert names == (
+        set(http_handler._DISPATCH) | set(http_handler._DISPATCH_WITH_DB) | set(http_handler._DISPATCH_WITH_ACTOR)
+    )
 
 
 def test_secret_is_resolved_per_call_not_captured_at_import():
@@ -996,7 +1000,7 @@ def test_initialize_and_tools_list():
     init = _run(http_handler.handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
     assert init["result"]["serverInfo"]["name"] == "aw-knowledgeable"
     listed = _run(http_handler.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
-    assert len(listed["result"]["tools"]) == 16
+    assert len(listed["result"]["tools"]) == 21
 
 
 def test_initialized_notification_gets_no_response():
@@ -1347,3 +1351,105 @@ def test_qa_search_is_dispatched_over_mcp_and_is_read_only():
     # no agent write tool for Q&A
     assert not [n for n in http_handler._DISPATCH if n.startswith("qa_") and n != "qa_search"]
     assert _schema("qa_search").keys() == {"query", "tags", "tags_mode", "limit", "include_disabled"}
+
+
+# ---------------------------------------------------------------------------
+# Q&A change requests (design ref qa-agent-proposals-v1, criteria 17-19)
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402
+
+PROPOSE_TOOLS = ["qa_propose_create", "qa_propose_update", "qa_propose_delete", "qa_propose_tag_rename", "qa_list_proposals"]
+
+
+def _call(name, args, actor="coder run=r1"):
+    resp = _run(http_handler.handle_request(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}},
+        actor=actor,
+    ))
+    r = resp["result"]
+    return r["content"][0]["text"], r["isError"]
+
+
+def test_propose_tools_are_listed_and_in_the_manifest():
+    import pathlib
+
+    listed = {t["name"] for t in client.TOOLS_SCHEMA}
+    manifest = _json.loads((pathlib.Path(__file__).parent.parent / "aw-app.json").read_text())
+    provided = set(manifest["contributes"]["mcp"]["provides"])
+    for name in PROPOSE_TOOLS:
+        assert name in listed and name in provided
+    for name in PROPOSE_TOOLS[:4]:
+        desc = next(t for t in client.TOOLS_SCHEMA if t["name"] == name)["description"]
+        assert "NOTHING is live" in desc and "qa_search" in desc
+
+
+@pytest.mark.parametrize(
+    "tool,args,expected",
+    [
+        ("qa_propose_create", {"question": "Q?", "answer": "A", "tags": ["x"], "reason": "why"},
+         {"kind": "create", "question": "Q?", "answer": "A", "tags": ["x"], "reason": "why"}),
+        ("qa_propose_update", {"id": "i1", "answer": "B", "add_tags": ["a"], "remove_tags": ["b"]},
+         {"kind": "update", "target_id": "i1", "answer": "B", "add_tags": ["a"], "remove_tags": ["b"]}),
+        ("qa_propose_delete", {"id": "i1"}, {"kind": "delete", "target_id": "i1"}),
+        ("qa_propose_tag_rename", {"from": "x", "to": "y"}, {"kind": "tag_rename", "from": "x", "to": "y"}),
+    ],
+)
+def test_propose_tools_forward_with_proposer_and_workspace(tool, args, expected):
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(201, {"proposal_id": "p1", "status": "pending", "duplicate": False}))
+    text, is_error = _call(tool, args)
+    assert not is_error
+    call = _FakeAsyncClient._CALLS[0]
+    assert call["url"].endswith("/api/qa/proposals")
+    body = call["json"]
+    assert body["proposed_by"] == "coder run=r1" and body["workspace_slug"]
+    assert {k: body[k] for k in expected} == expected
+    out = _json.loads(text)
+    assert out["proposal_id"] == "p1" and out["status"] == "pending" and "NOT live" in out["message"]
+
+
+def test_propose_update_needs_a_change_and_an_id():
+    assert _call("qa_propose_update", {"id": "i1"})[1] is True
+    assert _call("qa_propose_update", {"answer": "x"})[1] is True
+    assert _call("qa_propose_delete", {})[1] is True
+    assert _call("qa_propose_tag_rename", {"from": "x"})[1] is True
+    assert _FakeAsyncClient._CALLS == []
+
+
+def test_list_proposals_forwards_filters():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"proposals": [{"id": "p1", "status": "approved", "result_item_id": "i9", "current": {"big": 1}}], "pending_total": 0}))
+    text, is_error = _call("qa_list_proposals", {"status": "approved", "limit": 5})
+    assert not is_error
+    call = _FakeAsyncClient._CALLS[0]
+    assert call["url"].endswith("/api/qa/proposals") and call["params"] == {"status": "approved", "limit": 5}
+    got = _json.loads(text)["proposals"][0]
+    assert got["result_item_id"] == "i9" and "current" not in got
+
+
+@pytest.mark.parametrize("tool,args,status,body", [
+    ("qa_propose_create", {"question": "Q", "answer": "A"}, 405, {"detail": "Method Not Allowed"}),
+    ("qa_propose_delete", {"id": "i"}, 404, {"detail": "Not Found"}),
+    ("qa_list_proposals", {}, 404, {"detail": "not found"}),
+])
+def test_old_backend_gets_a_clear_unsupported_error(tool, args, status, body):
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(status, body))
+    text, is_error = _call(tool, args)
+    assert is_error and "does not support Q&A proposals yet" in text and "Traceback" not in text
+
+
+def test_unknown_item_is_not_reported_as_unsupported():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(404, {"detail": "not found"}))
+    text, is_error = _call("qa_propose_delete", {"id": "nope"})
+    assert is_error and "not found" in text and "does not support" not in text
+
+
+def test_seed_item_keeps_its_id_and_no_text_claims_agents_are_read_only():
+    import pathlib
+
+    root = pathlib.Path(__file__).parent.parent
+    items = {i["id"]: i for i in _json.loads((root / "qa" / "knowledgeable.json").read_text())}
+    seed = items["qa-cannot-be-written-by-agents"]
+    assert "qa_propose_create" in seed["answer"] and "approves" in seed["answer"]
+    assert not seed["answer"].startswith("No.")
+    for f in ("skills/aw-knowledgeable/SKILL.md", "README.md"):
+        assert "no agent write tool" not in (root / f).read_text()
