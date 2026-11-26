@@ -1463,3 +1463,22 @@ def test_qa_list_tags_gets_the_tags_route_and_reports_old_backend():
     _FakeAsyncClient._QUEUE.append(_FakeResponse(404, {"detail": "not found"}))
     text, is_error = _call("qa_list_tags", {})
     assert is_error and "does not support" in text
+
+
+def test_knowledge_search_schema_documents_include_cards_default():
+    props = _schema("knowledge_search")
+    assert props["include_cards"]["type"] == "boolean"
+    assert "Default false" in props["include_cards"]["description"]
+    assert "notion/kanban/" in props["include_cards"]["description"]
+
+
+def test_knowledge_search_forwards_include_cards_explicitly():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"chunks": []}))
+    _run(client.knowledge_search({"query": "sushi", "include_cards": True}))
+    assert _FakeAsyncClient._CALLS[0]["json"] == {"query": "sushi", "include_cards": True}
+
+
+def test_knowledge_search_omits_include_cards_when_the_caller_did_not_send_it():
+    _FakeAsyncClient._QUEUE.append(_FakeResponse(200, {"chunks": []}))
+    _run(client.knowledge_search({"query": "sushi"}))
+    assert "include_cards" not in _FakeAsyncClient._CALLS[0]["json"]

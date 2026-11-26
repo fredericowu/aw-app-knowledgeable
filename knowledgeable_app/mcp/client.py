@@ -1280,7 +1280,7 @@ async def knowledge_search_data(args: dict) -> tuple[dict | None, str | None]:
         return None, "query is required"
 
     body: dict = {"query": query}
-    for field in ("mode", "radius", "limit", "subqueries", "rounds", "budget_ms", "synthesize", "include_qa"):
+    for field in ("mode", "radius", "limit", "subqueries", "rounds", "budget_ms", "synthesize", "include_qa", "include_cards"):
         if args.get(field) is not None:
             body[field] = args[field]
     if args.get("filters"):
@@ -1864,6 +1864,22 @@ TOOLS_SCHEMA = [
                         "`source: \"qa\"` and a `qa_id` (there is no real document behind "
                         "one: `text` holds `Q: ...` / `A: ...`). Pass false to exclude them. Skipped "
                         "automatically when `collection` or document `filters` are set."
+                    ),
+                },
+                "include_cards": {
+                    "type": "boolean",
+                    "description": (
+                        "Default false. Kanban cards (notion/kanban/) are EXCLUDED by "
+                        "default, as a pre-filter inside every retrieval arm: they are "
+                        "~89% of the chunk store and bury runbooks, skills and design "
+                        "docs. Pass true to search cards too (incident history, past "
+                        "decisions, card lookups) with the unchanged pre-ranking "
+                        "behaviour. An explicit `collection` inside notion/kanban/ or a "
+                        "`filters.document_ids` list also reaches cards without the flag. "
+                        "The response's `effective.include_cards` / "
+                        "`effective.excluded_collections` say what ran; by default each "
+                        "chunk also carries `rrf_score`, `rank_weight` and `rank_score` "
+                        "(the value results are ordered by)."
                     ),
                 },
                 "code_query": {
