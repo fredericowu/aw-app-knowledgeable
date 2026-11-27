@@ -144,6 +144,28 @@ VAULT_COVERAGE_REGISTRY: dict[str, tuple[str, ...]] = {
     # Zadarma SIP account password — no fixed shape, caught by
     # `env-assignment` on a `…PASSWORD=`-style name.
     "zadarma_account_password": ("env-assignment",),
+    # aw-skills ingest token (`list_secrets`: "aw-skills ingest token") — an
+    # opaque bearer-style token with no shape of its own. Caught by
+    # `env-assignment` on the `SKILLS_SYNC_TOKEN=` name it is configured
+    # under, and `authorization-header` when sent as a Bearer credential.
+    "SKILLS_SYNC_TOKEN": ("env-assignment", "authorization-header"),
+    # Generic AP-MT ApiKey for the GitHub Actions Devteam Code Review
+    # (`AW_CODEREVIEW_V1_KEY`) — same shape as the `knowledgeable-*-apmt-key`
+    # family: a Bearer credential when sent, a `…_KEY=` assignment when set.
+    "aw_codereview_v1_key": ("authorization-header", "env-assignment"),
+    # Shared HMAC secret (`AW_DEVTEAM_EVENT_SECRET`) between the code-review
+    # workflow and the AP-MT backend. It signs rather than travels as a
+    # header, so the only shape it takes in run text is the configured
+    # `…_SECRET=` assignment.
+    "aw_devteam_event_secret": ("env-assignment",),
+    # GitHub OAuth App client secret (`GITHUB_OAUTH_CLIENT_SECRET`) — opaque
+    # hex, no public prefix, caught by `env-assignment` on the `…_SECRET=`
+    # name and `credential-field` in a JSON/kwargs `client_secret` field.
+    "github_oauth_agentic_workspace_client_secret": ("env-assignment", "credential-field"),
+    # Disposable AW Desktop Mac canary account — `list_secrets` describes the
+    # value as an "email+password JSON", so the shape is a `"password": "…"`
+    # field, caught by `credential-field`.
+    "aw-desktop-mac-canary": ("credential-field",),
 }
 
 #: Vault secret NAMES reviewed and found NOT credential-shaped — a hostname,
@@ -155,12 +177,26 @@ VAULT_COVERAGE_REGISTRY: dict[str, tuple[str, ...]] = {
 #: make a reviewed-harmless name indistinguishable from a covered credential
 #: at a glance, which is the ambiguity this dict exists to remove.
 #:
-#: Empty today: triaging the 21 names current in production (2026-10-19)
-#: found none that qualify — every one is credential-shaped. This dict
-#: exists so the NEXT name that genuinely is a hostname/slug/account id has
-#: somewhere to go other than `VAULT_COVERAGE_REGISTRY` with an invented
-#: family or `vault_names_uncovered` forever.
-VAULT_REVIEWED_NOT_CREDENTIAL: dict[str, str] = {}
+#: The 2026-10-19 triage of 21 names found none that qualified; the first
+#: two (an OAuth client ID and an SSH username) were cleared on 2026-11-27.
+#: This dict is where a name that genuinely is a hostname/slug/account id goes,
+#: rather than `VAULT_COVERAGE_REGISTRY` with an invented family or
+#: `vault_names_uncovered` forever.
+VAULT_REVIEWED_NOT_CREDENTIAL: dict[str, str] = {
+    # OAuth client IDs are public identifiers: they appear in every
+    # authorize-redirect URL the browser follows. Only the paired client
+    # secret (registered above) is a credential.
+    "github_oauth_agentic_workspace_client_id": (
+        "GitHub OAuth App client ID — a public identifier shown in the "
+        "authorize URL; the paired client secret is registered separately"
+    ),
+    # `list_secrets` describes it as "mac mini ssh user aw": the SSH login
+    # name for the Mac mini, i.e. a username, not a password or key.
+    "mini": (
+        "SSH username for the Mac mini (list_secrets: 'mac mini ssh user "
+        "aw') — an account name, not a credential; the key is a separate entry"
+    ),
+}
 
 
 def uncovered_names(names: Iterable[str]) -> list[str]:

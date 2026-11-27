@@ -184,6 +184,27 @@ _REPRESENTATIVE_SHAPES = {
     "zadarma_account_password": {
         "env-assignment": "ZADARMA_ACCOUNT_PASSWORD=invented-registry-test-zadarma-pw",
     },
+    "SKILLS_SYNC_TOKEN": {
+        "env-assignment": "SKILLS_SYNC_TOKEN=invented-registry-test-skills-sync",
+        "authorization-header": "Authorization: Bearer invented-registry-test-skills-sync",
+    },
+    "aw_codereview_v1_key": {
+        "authorization-header": "Authorization: Bearer invented-registry-test-codereview-key",
+        "env-assignment": "AW_CODEREVIEW_V1_KEY=invented-registry-test-codereview-key",
+    },
+    "aw_devteam_event_secret": {
+        "env-assignment": "AW_DEVTEAM_EVENT_SECRET=invented-registry-test-event-secret",
+    },
+    "github_oauth_agentic_workspace_client_secret": {
+        "env-assignment": "GITHUB_OAUTH_CLIENT_SECRET=invented-registry-test-gh-oauth-secret",
+        "credential-field": '{"client_secret": "invented-registry-test-gh-oauth-secret"}',
+    },
+    "aw-desktop-mac-canary": {
+        "credential-field": (
+            '{"email": "canary@example.invalid", '
+            '"password": "invented-registry-test-canary-pw"}'
+        ),
+    },
 }
 
 
@@ -257,6 +278,26 @@ def test_every_reviewed_not_credential_entry_has_a_non_empty_reason():
             f"{name!r} has no recorded reason — a reviewed-harmless entry "
             "must say why, or it is indistinguishable from an oversight"
         )
+
+
+def test_reviewed_and_registered_names_do_not_overlap():
+    overlap = set(vault_coverage.VAULT_REVIEWED_NOT_CREDENTIAL) & set(
+        vault_coverage.VAULT_COVERAGE_REGISTRY
+    )
+    assert not overlap, f"{overlap} is both registered and reviewed-not-credential"
+
+
+def test_the_seven_triaged_2026_11_27_names_are_no_longer_uncovered():
+    names = [
+        "SKILLS_SYNC_TOKEN",
+        "aw_codereview_v1_key",
+        "aw_devteam_event_secret",
+        "github_oauth_agentic_workspace_client_id",
+        "github_oauth_agentic_workspace_client_secret",
+        "aw-desktop-mac-canary",
+        "mini",
+    ]
+    assert vault_coverage.uncovered_names(names) == []
 
 
 def test_a_reviewed_not_credential_name_is_excluded_from_uncovered(monkeypatch):
