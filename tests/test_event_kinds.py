@@ -118,6 +118,30 @@ SAMPLED_PAYLOADS: dict[str, dict] = {
     "tool_call": {"id": "toolu_invented", "name": "Read", "input": {"file_path": "/x"}},
     "tool_result": {"tool_use_id": "toolu_invented", "content": "file contents"},
     "llm_token": {"delta": "he"},
+    # Reviewed 2026-11-27 (card 4255bf3b). Invented values only.
+    "cli.stderr": {
+        "subtype": "stderr",
+        "message": "connect failed: postgres://svc:PLANTED_STDERR_SECRET_0001@db:5432/x",
+        "signature": "connect_error",
+    },
+    "node_skipped": {"label": "Review", "reason": "dependency build errored"},
+    "turn.usage": {
+        "scope": "weekly",
+        "provider": "codex",
+        "state": "available",
+        "source": "vendor",
+        "used_percent": 42.0,
+        "remaining_percent": 58.0,
+        "reset_at": "2026-12-01T00:00:00+00:00",
+        "observed_at": "2026-11-27T00:00:00+00:00",
+        "reason": None,
+    },
+    "workflow.graph": {
+        "workflow_slug": "demo",
+        "name": "Demo",
+        "kind": "dag",
+        "graph": {"nodes": [{"id": "a", "prompt": "PLANTED_GRAPH_SECRET_0002"}]},
+    },
 }
 
 
@@ -555,7 +579,7 @@ def test_an_unshipped_or_unregistered_kind_projects_nothing_but_identity():
     `tool_result` is the one that matters now that `node_end`/`thinking`
     shipped in slice 2: it has a `text_field` too (slice 3), and leaking its
     text a slice early is the same §13.12 point 3 trap, one kind over."""
-    for kind in ("tool_call", "tool_result", "llm_token", "some.kind.invented.next.year"):
+    for kind in ("tool_call", "tool_result", "llm_token", "cli.stderr", "workflow.graph", "node_skipped", "turn.usage", "some.kind.invented.next.year"):
         payload = SAMPLED_PAYLOADS.get(kind, {"anything": "at all"})
         row, dropped = exec_sync.build_event_row(_record(kind, payload), _scrubber())
         assert set(row) == {"id", "run_id", "kind", "ts", "node_id"}, f"{kind}: {sorted(row)}"
@@ -680,3 +704,54 @@ def test_the_result_kind_and_its_payload_key_come_from_the_registry():
     assert spec.text_field in SAMPLED_PAYLOADS[event_kinds.RESULT_KIND], (
         "the registry's payload key does not exist in the measured payload shape"
     )
+
+
+# ---------------------------------------------------------------------------
+# Card 4255bf3b: the four kinds the doctor reported as unreviewed.
+# ---------------------------------------------------------------------------
+
+REVIEWED_2026_11_27 = {
+    "cli.stderr": "excluded",
+    "workflow.graph": "excluded",
+    "node_skipped": "structured",
+    "turn.usage": "structured",
+}
+
+
+@pytest.mark.parametrize("kind,verdict", sorted(REVIEWED_2026_11_27.items()))
+def test_the_four_formerly_unreviewed_kinds_have_a_verdict_and_are_not_shipped(kind, verdict):
+    spec = event_kinds.EVENT_KIND_REGISTRY[kind]
+    assert spec.verdict == verdict
+    assert not spec.shipped
+    assert kind not in event_kinds.shipped_kinds()
+    assert event_kinds.unreviewed_kinds([kind]) == []
+
+
+def test_a_planted_credential_in_cli_stderr_never_crosses_the_seam():
+    """cli.stderr is the riskiest kind: raw stderr echoes credentials. It is
+    excluded, so even a hand-built row (SQL cannot select it) projects only
+    identity — no text, no message, no property — and the invented secret
+    appears nowhere in the serialised row."""
+    import json
+
+    payload = SAMPLED_PAYLOADS["cli.stderr"]
+    assert "PLANTED_STDERR_SECRET_0001" in payload["message"]
+    row, dropped = exec_sync.build_event_row(_record("cli.stderr", payload), _scrubber())
+    assert set(row) == {"id", "run_id", "kind", "ts", "node_id"}
+    assert dropped == 0
+    assert "PLANTED_STDERR_SECRET_0001" not in json.dumps(row, default=str)
+
+
+def test_workflow_graph_projects_nothing_from_its_payload():
+    import json
+
+    row, _ = exec_sync.build_event_row(
+        _record("workflow.graph", SAMPLED_PAYLOADS["workflow.graph"]), _scrubber()
+    )
+    assert set(row) == {"id", "run_id", "kind", "ts", "node_id"}
+    assert "PLANTED_GRAPH_SECRET_0002" not in json.dumps(row, default=str)
+
+
+def test_a_genuinely_new_kind_still_trips_the_alarm_after_this_review():
+    seen = list(event_kinds.EVENT_KIND_REGISTRY) + ["cli.stderr.v2", "brand.new"]
+    assert event_kinds.unreviewed_kinds(seen) == ["brand.new", "cli.stderr.v2"]

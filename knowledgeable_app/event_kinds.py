@@ -415,7 +415,65 @@ EVENT_KIND_REGISTRY: dict[str, EventKind] = {
             "wholesale under the same terminal-segment rule."
         ),
     ),
+    # ---- reviewed 2026-11-27 (card 4255bf3b): the four kinds the doctor flagged
+    "node_skipped": EventKind(
+        verdict="structured",
+        shipped=False,
+        reason=(
+            "REVIEWED, NOT SHIPPED. Orchestrator DAG node skipped. Emitted at "
+            "`core/orchestrators/__init__.py` with {label, reason}, where `reason` "
+            "is built from fixed templates (\"dependency X errored/gated/skipped\", "
+            "\"<budget> budget exceeded\") around node ids — no model or CLI text. "
+            "Low risk, but shipping a kind also needs the server-side "
+            "`SHIPPED_EVENT_KINDS` allowlist to know it (an unknown shipped kind 400s "
+            "the whole batch and stalls the watermark), so this row records the "
+            "verdict and leaves projection to a deliberate slice with its own "
+            "property types. `error`/`done` already carry the run outcome."
+        ),
+    ),
+    "turn.usage": EventKind(
+        verdict="structured",
+        shipped=False,
+        reason=(
+            "REVIEWED, NOT SHIPPED. Subscription quota report from "
+            "`usage_report.normalize_subscription_usage`: {scope, provider, state, "
+            "source, used_percent, remaining_percent, reset_at, observed_at, "
+            "reason}. Numbers, enums and timestamps; `reason` is a short vendor "
+            "failure string. Account-level state rather than per-run content, so "
+            "it has no retrieval value as an ExecEvent, and `finalizing` already "
+            "carries the per-node token/cost accounting. Not projected."
+        ),
+    ),
     # ---- reviewed and permanently excluded --------------------------------
+    "cli.stderr": EventKind(
+        verdict="excluded",
+        shipped=False,
+        reason=(
+            "NEVER. Raw runner-CLI stderr: {subtype, message, signature}, where "
+            "`message` is up to 20 KB of whatever the CLI wrote to its error "
+            "stream. Stderr is where connection strings, env echoes and "
+            "tokens in failed commands surface, and AP-MT's own `scrub_secrets` "
+            "is a pattern pass that cannot be assumed to cover a third-party "
+            "credential. The only rows of this kind in practice are codex's "
+            "benign stdin-preamble banner downgraded from `cli.error`, so "
+            "excluding it loses nothing: `cli.error` already ships its "
+            "classification (`subtype`, `is_error`) without `message`. Free text "
+            "that must never cross is excluded, not scrubbed-and-hoped."
+        ),
+    ),
+    "workflow.graph": EventKind(
+        verdict="excluded",
+        shipped=False,
+        reason=(
+            "NEVER. One-shot snapshot of the whole workflow definition: "
+            "{workflow_slug, name, kind, graph}. `graph` is the full node tree "
+            "including authored prompts, transform ops and gate flags — a large "
+            "nested blob (not a flat payload an allowlist can cut down) that "
+            "tenants write by hand and may embed credentials or private "
+            "instructions. The definition is the Workflow row's data, not "
+            "execution history; per-run lineage is already the CHILD_OF layer."
+        ),
+    ),
     "llm_token": EventKind(
         verdict="excluded",
         shipped=False,
